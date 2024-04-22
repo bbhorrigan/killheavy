@@ -13,12 +13,30 @@ namespace ProcessControlApp
 
         private void KillHeavyProcessesButton_Click(object sender, EventArgs e)
         {
-            // Kill all heavy processes that are hung
+            // Kill heavy and hung processes
+            KillProcesses(p => !p.Responding && p.PrivateMemorySize64 > 50000000);
+        }
+
+        private void StopDefenderSymantecButton_Click(object sender, EventArgs e)
+        {
+            // Stop Defender/Symantec processes
+            StopProcessesByName("defender.exe");
+            StopProcessesByName("symantec.exe");
+        }
+
+        private void StopChildProcessesButton_Click(object sender, EventArgs e)
+        {
+            // Stop child processes
+            KillProcesses(p => p.Parent() == Process.GetCurrentProcess());
+        }
+
+        private void KillProcesses(Func<Process, bool> condition)
+        {
             foreach (var process in Process.GetProcesses())
             {
                 try
                 {
-                    if (process.Responding == false && process.PrivateMemorySize64 > 50000000) // Customize the condition for heavy and hung processes
+                    if (condition(process))
                     {
                         process.Kill();
                     }
@@ -28,13 +46,6 @@ namespace ProcessControlApp
                     MessageBox.Show("Error: " + ex.Message);
                 }
             }
-        }
-
-        private void StopDefenderSymantecButton_Click(object sender, EventArgs e)
-        {
-            // Stop all Defender/Symantec processes
-            StopProcessesByName("defender.exe");
-            StopProcessesByName("symantec.exe");
         }
 
         private void StopProcessesByName(string processName)
@@ -44,25 +55,6 @@ namespace ProcessControlApp
                 try
                 {
                     process.Kill();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Error: " + ex.Message);
-                }
-            }
-        }
-
-        private void StopChildProcessesButton_Click(object sender, EventArgs e)
-        {
-            // Stop child processes
-            foreach (var process in Process.GetProcesses())
-            {
-                try
-                {
-                    if (process.Parent() == Process.GetCurrentProcess())
-                    {
-                        process.Kill();
-                    }
                 }
                 catch (Exception ex)
                 {
