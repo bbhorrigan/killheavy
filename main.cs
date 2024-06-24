@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace ProcessControlApp
@@ -11,56 +12,88 @@ namespace ProcessControlApp
             InitializeComponent();
         }
 
-        private void KillHeavyProcessesButton_Click(object sender, EventArgs e)
+        private async void KillHeavyProcessesButton_Click(object sender, EventArgs e)
         {
             // Kill heavy and hung processes
-            KillProcesses(p => !p.Responding && p.PrivateMemorySize64 > 50000000);
+            await KillProcessesAsync(p => !p.Responding && p.PrivateMemorySize64 > 50_000_000);
         }
 
-        private void StopDefenderSymantecButton_Click(object sender, EventArgs e)
+        private async void StopDefenderSymantecButton_Click(object sender, EventArgs e)
         {
             // Stop Defender/Symantec processes
-            StopProcessesByName("defender.exe");
-            StopProcessesByName("symantec.exe");
+            await StopProcessesByNameAsync("defender");
+            await StopProcessesByNameAsync("symantec");
         }
 
-        private void StopChildProcessesButton_Click(object sender, EventArgs e)
+        private async void StopChildProcessesButton_Click(object sender, EventArgs e)
         {
             // Stop child processes
-            KillProcesses(p => p.Parent() == Process.GetCurrentProcess());
+            var parentProcess = Process.GetCurrentProcess();
+            await KillProcessesAsync(p => IsChildProcess(p, parentProcess));
         }
 
-        private void KillProcesses(Func<Process, bool> condition)
+        private async Task KillProcessesAsync(Func<Process, bool> condition)
         {
-            foreach (var process in Process.GetProcesses())
-            {
-                try
-                {
-                    if (condition(process))
-                    {
-                        process.Kill();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Error: " + ex.Message);
-                }
-            }
-        }
-
-        private void StopProcessesByName(string processName)
-        {
-            foreach (var process in Process.GetProcessesByName(processName))
+            var processes = Process.GetProcesses().Where(condition).ToList();
+            foreach (var process in processes)
             {
                 try
                 {
                     process.Kill();
+                    await Task.Run(() => process.WaitForExit());
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("Error: " + ex.Message);
+                    LogError($"Error killing process {process.ProcessName} (ID: {process.Id}): {ex.Message}");
                 }
             }
+            MessageBox.Show("Operation completed.");
+        }
+
+        private async Task StopProcessesByNameAsync(string processName)
+        {
+            var processes = Process.GetProcessesByName(processName);
+            foreach (var process in processes)
+            {
+                try
+                {
+                    process.Kill();
+                    await Task.Run(() => process.WaitForExit());
+                }
+                catch (Exception ex)
+                {
+                    LogError($"Error stopping process {process.ProcessName} (ID: {process.Id}): {ex.Message}");
+                }
+            }
+            MessageBox.Show($"Stopped all processes named {processName}.");
+        }
+
+        private bool IsChildProcess(Process process, Process parent)
+        {
+            try
+            {
+                var query = $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId={process.Id}";
+                var search = new ManagementObjectSearcher("root\\CIMV2", query);
+                var results = search.Get().Cast<ManagementObject>().FirstOrDefault();
+
+                if (results != null && results["ParentProcessId"] != null)
+                {
+                    var parentId = Convert.ToInt32(results["ParentProcessId"]);
+                    return parentId == parent.Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error determining parent of process {process.ProcessName} (ID: {process.Id}): {ex.Message}");
+            }
+            return false;
+        }
+
+        private void LogError(string message)
+        {
+            // Log the error message to a file or other logging mechanism
+            // For simplicity, we'll use a message box in this example
+            MessageBox.Show(message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }
