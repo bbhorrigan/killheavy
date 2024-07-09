@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows.Forms;
+using System.Management;
+using System.Threading.Tasks;
 
 namespace ProcessControlApp
 {
@@ -30,6 +32,28 @@ namespace ProcessControlApp
             // Stop child processes
             var parentProcess = Process.GetCurrentProcess();
             await KillProcessesAsync(p => IsChildProcess(p, parentProcess));
+        }
+
+        private async void ListProcessesButton_Click(object sender, EventArgs e)
+        {
+            // List all processes
+            var processes = Process.GetProcesses().OrderBy(p => p.ProcessName).ToList();
+            var processList = string.Join(Environment.NewLine, processes.Select(p => $"{p.ProcessName} (ID: {p.Id})"));
+            MessageBox.Show(processList, "Running Processes", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private async void KillSelectedProcessesButton_Click(object sender, EventArgs e)
+        {
+            // Allow user to select and kill specific processes
+            var processes = Process.GetProcesses().OrderBy(p => p.ProcessName).ToList();
+            using (var form = new SelectProcessesForm(processes))
+            {
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    var selectedProcesses = form.SelectedProcesses;
+                    await KillProcessesAsync(p => selectedProcesses.Contains(p));
+                }
+            }
         }
 
         private async Task KillProcessesAsync(Func<Process, bool> condition)
@@ -94,6 +118,48 @@ namespace ProcessControlApp
             // Log the error message to a file or other logging mechanism
             // For simplicity, we'll use a message box in this example
             MessageBox.Show(message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    public class SelectProcessesForm : Form
+    {
+        public List<Process> SelectedProcesses { get; private set; }
+
+        private CheckedListBox checkedListBox;
+
+        public SelectProcessesForm(List<Process> processes)
+        {
+            Text = "Select Processes to Kill";
+            Width = 400;
+            Height = 600;
+
+            checkedListBox = new CheckedListBox
+            {
+                Dock = DockStyle.Fill,
+                CheckOnClick = true
+            };
+
+            foreach (var process in processes)
+            {
+                checkedListBox.Items.Add(process, false);
+            }
+
+            var okButton = new Button
+            {
+                Text = "OK",
+                Dock = DockStyle.Bottom
+            };
+            okButton.Click += OkButton_Click;
+
+            Controls.Add(checkedListBox);
+            Controls.Add(okButton);
+        }
+
+        private void OkButton_Click(object sender, EventArgs e)
+        {
+            SelectedProcesses = checkedListBox.CheckedItems.Cast<Process>().ToList();
+            DialogResult = DialogResult.OK;
+            Close();
         }
     }
 }
