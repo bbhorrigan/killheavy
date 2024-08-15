@@ -4,11 +4,14 @@ using System.Linq;
 using System.Windows.Forms;
 using System.Management;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace ProcessControlApp
 {
     public partial class MainForm : Form
     {
+        private CancellationTokenSource _cts = new CancellationTokenSource();
+
         public MainForm()
         {
             InitializeComponent();
@@ -16,55 +19,58 @@ namespace ProcessControlApp
 
         private async void KillHeavyProcessesButton_Click(object sender, EventArgs e)
         {
-            // Kill heavy and hung processes
-            await KillProcessesAsync(p => !p.Responding && p.PrivateMemorySize64 > 50_000_000);
+            await KillProcessesAsync(p => !p.Responding && p.PrivateMemorySize64 > 50_000_000, _cts.Token);
         }
 
         private async void StopDefenderSymantecButton_Click(object sender, EventArgs e)
         {
-            // Stop Defender/Symantec processes
-            await StopProcessesByNameAsync("defender");
-            await StopProcessesByNameAsync("symantec");
+            string[] processNames = { "defender", "symantec" };
+            foreach (var name in processNames)
+            {
+                await StopProcessesByNameAsync(name, _cts.Token);
+            }
         }
 
         private async void StopChildProcessesButton_Click(object sender, EventArgs e)
         {
-            // Stop child processes
             var parentProcess = Process.GetCurrentProcess();
-            await KillProcessesAsync(p => IsChildProcess(p, parentProcess));
+            await KillProcessesAsync(p => IsChildProcess(p, parentProcess), _cts.Token);
         }
 
         private async void ListProcessesButton_Click(object sender, EventArgs e)
         {
-            // List all processes
-            var processes = Process.GetProcesses().OrderBy(p => p.ProcessName).ToList();
-            var processList = string.Join(Environment.NewLine, processes.Select(p => $"{p.ProcessName} (ID: {p.Id})"));
-            MessageBox.Show(processList, "Running Processes", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            await Task.Run(() =>
+            {
+                var processes = Process.GetProcesses().OrderBy(p => p.ProcessName).ToList();
+                var processList = string.Join(Environment.NewLine, processes.Select(p => $"{p.ProcessName} (ID: {p.Id})"));
+                Invoke(new Action(() => MessageBox.Show(processList, "Running Processes", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+            });
         }
 
         private async void KillSelectedProcessesButton_Click(object sender, EventArgs e)
         {
-            // Allow user to select and kill specific processes
             var processes = Process.GetProcesses().OrderBy(p => p.ProcessName).ToList();
             using (var form = new SelectProcessesForm(processes))
             {
                 if (form.ShowDialog() == DialogResult.OK)
                 {
                     var selectedProcesses = form.SelectedProcesses;
-                    await KillProcessesAsync(p => selectedProcesses.Contains(p));
+                    await KillProcessesAsync(p => selectedProcesses.Contains(p), _cts.Token);
                 }
             }
         }
 
-        private async Task KillProcessesAsync(Func<Process, bool> condition)
+        private async Task KillProcessesAsync(Func<Process, bool> condition, CancellationToken cancellationToken)
         {
             var processes = Process.GetProcesses().Where(condition).ToList();
             foreach (var process in processes)
             {
+                if (cancellationToken.IsCancellationRequested) break;
+
                 try
                 {
                     process.Kill();
-                    await Task.Run(() => process.WaitForExit());
+                    await Task.Run(() => process.WaitForExit(), cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -74,15 +80,17 @@ namespace ProcessControlApp
             MessageBox.Show("Operation completed.");
         }
 
-        private async Task StopProcessesByNameAsync(string processName)
+        private async Task StopProcessesByNameAsync(string processName, CancellationToken cancellationToken)
         {
             var processes = Process.GetProcessesByName(processName);
             foreach (var process in processes)
             {
+                if (cancellationToken.IsCancellationRequested) break;
+
                 try
                 {
                     process.Kill();
-                    await Task.Run(() => process.WaitForExit());
+                    await Task.Run(() => process.WaitForExit(), cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -96,14 +104,15 @@ namespace ProcessControlApp
         {
             try
             {
-                var query = $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId={process.Id}";
-                var search = new ManagementObjectSearcher("root\\CIMV2", query);
-                var results = search.Get().Cast<ManagementObject>().FirstOrDefault();
-
-                if (results != null && results["ParentProcessId"] != null)
+                using (var search = new ManagementObjectSearcher("root\\CIMV2", $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId={process.Id}"))
                 {
-                    var parentId = Convert.ToInt32(results["ParentProcessId"]);
-                    return parentId == parent.Id;
+                    var results = search.Get().Cast<ManagementObject>().FirstOrDefault();
+
+                    if (results != null && results["ParentProcessId"] != null)
+                    {
+                        var parentId = Convert.ToInt32(results["ParentProcessId"]);
+                        return parentId == parent.Id;
+                    }
                 }
             }
             catch (Exception ex)
@@ -115,8 +124,7 @@ namespace ProcessControlApp
 
         private void LogError(string message)
         {
-            // Log the error message to a file or other logging mechanism
-            // For simplicity, we'll use a message box in this example
+            // Replace with logging framework of your choice
             MessageBox.Show(message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
